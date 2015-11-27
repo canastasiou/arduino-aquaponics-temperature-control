@@ -7,12 +7,15 @@
 #include <dht11.h>
 //#include <SD.h>
 
-/*!! ANTREA DE TA TOUTA !!*/
 //Intervals in seconds
 #define CIRCULATION_PUMP_ON_INTERVAL 1000
 #define CIRCULATION_PUMP_OFF_INTERVAL 1000
 #define WATERING_PUMP_INTERVAL 1000
-#define FAN_INTERVAL 1000
+#define FAN_ON_INTERVAL 1000
+#define FAN_OFF_INTERVAL 1000
+//Hours in day when lights should turn on/off
+#define INSECT_LIGHTS_ON_HOUR 20
+#define INSECT_LIGHTS_OFF_HOUR 4
 
 #define FAN_TEMPERATURE_THRESHOLD 20
 #define CIRCULATION_PUMP_TEMPERATURE_THRESHOLD 20
@@ -30,6 +33,8 @@
 //Pins for float sensors
 #define LOW_FLOAT_PIN 8
 #define HIGH_FLOAT_PIN 9
+//Insect lights
+#define INSECT_LIGHTS_PIN 10
 //Pins for water pumps
 #define CIRCULATION_PUMP_PIN 4
 #define WATERING_PUMP_PIN 5
@@ -59,7 +64,7 @@ dht11 IndoorAirSensor2;
 dht11 IndoorAirSensor3;
 
 //We initialize it with 10 values. 20 C is a good temperature to start. It will be fixed quickly.
-double indoorTemperatureValues[CACHEDVALUES] = {20,20,20,20,20,20,20,20,20,20};
+double indoorAirTemperatureValues[CACHEDVALUES] = {20,20,20,20,20,20,20,20,20,20};
 double waterTemperatureValues[CACHEDVALUES] = {20,20,20,20,20,20,20,20,20,20};
 
 //Defines the current index in the measurements arrays.
@@ -79,8 +84,10 @@ long wateringPumpStartTime = 0;
 long wateringPumpState = OFF;
 int checkWateringPump(int floatSensor);
 long fanStartTime;
-int checkFan();
-int checkInsectLights();
+long fanEndTime;
+int checkFan(double indoorAirTemperature, long timeInSeconds);
+int checkInsectLights(DateTime currentTime);
+double mean(double values[]);
 
 void setup () {
 	Serial.begin(57600);
@@ -130,7 +137,7 @@ void loop () {
 	float airTemperatureIndoors1;
 	float airTemperatureIndoors2;
 	float airTemperatureIndoors3;
-	float avgIndoorTemperatureMeasurement; //The average of the values from the 3 sensors
+	float avgIndoorAirTemperatureMeasurement;
 	float airHumidity1;
 	float airHumidity2;
 	float airHumidity3;
@@ -167,15 +174,15 @@ void loop () {
 	currentTime = rtc.now();
 	/* End Get measurements */
 
-	avgIndoorTemperatureMeasurement = (airTemperatureIndoors1 + airTemperatureIndoors2 + airTemperatureIndoors3) / 3;
+	avgIndoorAirTemperatureMeasurement = (airTemperatureIndoors1 + airTemperatureIndoors2 + airTemperatureIndoors3) / 3;
 	avgWaterTemperatureMeasurement = (waterTemperature2 + waterTemperature2) / 2;
 
 	//We store the average of the measurements received by the sensors
-	indoorTemperatureValues[measurementIndex] = avgIndoorTemperatureMeasurement;
+	indoorAirTemperatureValues[measurementIndex] = avgIndoorAirTemperatureMeasurement;
 	waterTemperatureValues[measurementIndex] = avgWaterTemperatureMeasurement;
 
 	//Set the new index
-	measurementIndex = (measurementIndex + 1) % CACHEDVALUES;
+	measurementIndex = measurementIndex % CACHEDVALUES;
 
 	//Print date-time on serial output
 	/*Serial.print(currentTime.year(), DEC);
@@ -233,12 +240,51 @@ void loop () {
 		Serial.println("error opening test.txt");
 	}*/
 	
-	if(checkCirculationPump(avgWaterTemperatureMeasurement, lowFloatState, currentTime.secondstime())){
+	if(checkCirculationPump(mean(waterTemperatureValues), lowFloatState, currentTime.secondstime())){
 		digitalWrite(CIRCULATION_PUMP_PIN, HIGH);
 	}else{
 		digitalWrite(CIRCULATION_PUMP_PIN, LOW);
 	}
-
+	
+	if(checkWateringPump(highFloatState, currentTime.secondstime())){
+		digitalWrite(WATERING_PUMP_PIN, HIGH);
+	}else{
+		digitalWrite(WATERING_PUMP_PIN, LOW);
+	}
+	
+	if(checkFan(mean(indoorAirTemperatureValues), currentTime.secondstime())){
+		digitalWrite(CIRCULATION_PUMP_PIN, HIGH);
+	}else{
+		digitalWrite(CIRCULATION_PUMP_PIN, LOW);
+	}
+	
+	if(checkInsectLights(currentTime)){
+		digitalWrite(INSECT_LIGHTS_PIN, HIGH);
+	}else{
+		digitalWrite(INSECT_LIGHTS_PIN, LOW);
+	}
+	
+	/* Print on serial */
+	Serial.print(currentTime.year(), DEC);
+	Serial.print('/');
+	Serial.print(currentTime.month(), DEC);
+	Serial.print('/');
+	Serial.print(currentTime.day(), DEC);
+	Serial.print(' ');
+	Serial.print(currentTime.hour(), DEC);
+	Serial.print(':');
+	Serial.print(currentTime.minute(), DEC);
+	Serial.print(':');
+	Serial.print(currentTime.second(), DEC);
+	Serial.print("Water temperature (avg): ");
+	Serial.println(avgWaterTemperatureMeasurement);
+	Serial.print("Indoor air temperature (avg): ");
+	Serial.println(avgIndoorAirTemperatureMeasurement);
+	Serial.print("Indoor air humidity: ");
+	Serial.println(airHumidity3);
+	
+	/* Print on LCD */
+	
 	Serial.println();
 	delay(3000);
 }
@@ -304,7 +350,7 @@ int checkWateringPump(int floatSensor, long timeInSeconds){
 		// If we don't have overflow but the pump is started
 		// we give it some time to work, so that we don't have
 		// continuous starts and stops when water level is close
-		// to sensor level.
+		// to float sensor level.
 		pumpState = ON;
 	}else{
 		pumpState = OFF;
@@ -322,4 +368,39 @@ int checkWateringPump(int floatSensor, long timeInSeconds){
 	wateringPumpState = pumpState;
 	
 	return wateringPumpState;
+}
+
+int checkFan(double indoorAirTemperature, long timeInSeconds){
+	int fanState = OFF;
+	
+	//If override switch is on, turn on
+	if(digitalRead(FAN_SWITCH_PIN) == HIGH){
+		fanState = ON;
+	}
+	
+	return fanState;
+}
+
+int checkInsectLights(DateTime currentTime){
+		int lightsState = OFF;
+		
+		// Turn on at the ON_HOUR and turn off exactly when we reach OFF_HOUR (hour == OFF_HOUR)
+		if(currentTime.hour() >= INSECT_LIGHTS_ON_HOUR || currentTime.hour()  < INSECT_LIGHTS_OFF_HOUR){
+			lightsState = ON;
+		}
+		
+		return lightsState;
+}
+
+double mean(double values[]){
+	double mean;
+	double total = 0;
+	
+	for(int i = 0; i < CACHEDVALUES; i++){
+		total = total + values[i];
+	}
+	
+	mean = total / CACHEDVALUES;
+	
+	return mean;
 }
