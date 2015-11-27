@@ -382,14 +382,13 @@ int checkFan(double indoorAirTemperature, long timeInSeconds){
 }
 
 int checkInsectLights(DateTime currentTime){
-		int lightsState = OFF;
-		
-		// Turn on at the ON_HOUR and turn off exactly when we reach OFF_HOUR (hour == OFF_HOUR)
-		if(currentTime.hour() >= INSECT_LIGHTS_ON_HOUR || currentTime.hour()  < INSECT_LIGHTS_OFF_HOUR){
-			lightsState = ON;
-		}
-		
-		return lightsState;
+	int lightsState = OFF;
+	// Turn on at the ON_HOUR and turn off exactly when we reach OFF_HOUR (hour == OFF_HOUR)
+	if(currentTime.hour() >= INSECT_LIGHTS_ON_HOUR || currentTime.hour()  < INSECT_LIGHTS_OFF_HOUR){
+		lightsState = ON;
+	}
+	
+	return lightsState;
 }
 
 double mean(double values[]){
